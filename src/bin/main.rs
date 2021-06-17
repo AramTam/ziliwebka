@@ -1,23 +1,27 @@
-// TODO Learn a bit about TCP and HTTP.
-// TODO Listen for TCP connections on a socket.
-// TODO Parse a small number of HTTP requests.
-// TODO Create a proper HTTP response.
+// DONE Learn a bit about TCP and HTTP.
+// DONE Listen for TCP connections on a socket.
+// DONE Parse a small number of HTTP requests.
+// DONE Create a proper HTTP response.
 // TODO Improve the throughput of our server with a thread pool.
 
 use std::fs;
 use std::io::prelude::*;
 
-use std::iter::Iterator;
 use std::net::TcpListener;
 use std::net::TcpStream;
-use std::string::String;
+
+use std::thread;
+use std::time::Duration;
+
+use web_server::ThreadPool;
 
 fn main() {
-	let listener = TcpListener::bind("127.0.0.1:7878").unwrap();
+	let listener = TcpListener::bind("0.0.0.0:7878").unwrap();
+	let pool = ThreadPool::new(4);
 
 	for stream in listener.incoming() {
 		let stream = stream.unwrap();
-		handle_connection(stream);
+		pool.execute(|| handle_connection(stream));
 	}
 }
 
