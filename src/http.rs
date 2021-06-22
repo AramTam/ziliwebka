@@ -1,6 +1,4 @@
-// TODO create structs that represent requests and responses
-// TODO write functions that would parse text request
-// REMEMBER Headers should be case insensitive
+// TODO Headers should be case insensitive
 pub use http::*;
 
 mod http {
@@ -40,10 +38,10 @@ mod http {
 	///### Struct that represents HTTP Request
 	#[derive(Debug, PartialEq)]
 	pub struct Request {
-		method: Method,
-		uri: String,
-		headers: HashMap<String, String>,
-		body: Option<Vec<u8>>,
+		pub method: Method,
+		pub uri: String,
+		pub headers: HashMap<String, String>,
+		pub body: Option<Vec<u8>>,
 	}
 	impl Request {
 		pub fn new(gotten_request: &[u8]) -> Option<Request> {
@@ -97,26 +95,21 @@ mod http {
 			// Parsing headers
 			let mut headers = HashMap::new();
 			for line in lines.into_iter().skip(1) {
-				println!("{}", line);
-				let pair: Vec<String> = line.split(":").map(String::from).collect();
-				if pair.len() < 2 {
-					continue;
+				let mut colon_index = None;
+				// Looking for firstly appeared ':' in line
+				for (index, character) in line.chars().enumerate() {
+					if character == ':' {
+						colon_index = Some(index);
+						break;
+					}
 				}
-				headers.insert(
-					pair[0].clone(),
-					pair.into_iter()
-						.skip(1)
-						.enumerate()
-						.map(|(index, value)| {
-							if index != 0 {
-								format!(":{}", value)
-							} else {
-								String::from(value)
-							}
-						})
-						.collect::<String>()
-						.clone(),
-				);
+
+				if let Some(index) = colon_index {
+					headers.insert(
+						line.chars().take(index).collect(),
+						line.chars().skip(index + 1).collect(),
+					);
+				}
 			}
 
 			Some(Request {
@@ -128,6 +121,9 @@ mod http {
 		}
 	}
 
+	// TODO add transfer from unsafe characters in URI
+	// TODO change new function to create empty response and add getters and setters for different vales
+	// TODO forbid using .. in URI for security measures
 	#[derive(Debug, PartialEq)]
 	pub struct Response {
 		code: usize,
