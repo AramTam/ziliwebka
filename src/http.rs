@@ -66,16 +66,13 @@ mod http {
 			}
 			// Splitting request to request line + headers and body
 			let (headers, body) = gotten_request.split_at(start_of_body);
-			let formatted_body: Vec<u8> = body
-				.into_iter()
-				.filter(|&val| val != &0)
-				.map(|val| *val)
-				.collect();
 
-			let body = if formatted_body.len() > 0 {
-				Some(formatted_body)
-			} else {
+			let formatted_body: Vec<u8> = body.into_iter().map(|val| *val).collect();
+			// Checking if all bytes are zero adn setting body to None
+			let body = if formatted_body.iter().all(|value| *value == 0) {
 				None
+			} else {
+				Some(formatted_body)
 			};
 
 			let lines: Vec<String> = String::from_utf8_lossy(headers)
@@ -155,6 +152,7 @@ mod http {
 			for (index, value) in self.headers {
 				string += &format!("{}: {}\r\n", index, value);
 			}
+			string += "\r\n";
 
 			let mut bytes = Vec::from(string.as_bytes());
 			bytes.append(&mut self.body.clone());
