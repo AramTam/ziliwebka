@@ -1,5 +1,5 @@
 [package]
-name = "web_server"
+name = "ziliwebka"
 version = "0.0.1"
 authors = ["Kai Kosades <red4truck@tutanota.com>"]
 edition = "2018"
