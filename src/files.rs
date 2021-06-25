@@ -1,8 +1,9 @@
+// TODO learn more about caching
 pub use files::*;
 pub mod files {
 	use std::fs;
 
-	pub fn get_file(path_to_file: &str) -> (u32, Vec<u8>, String) {
+	pub fn get_file(path_to_file: &str) -> (u32, Vec<u8>, usize) {
 		use std::io::ErrorKind::*;
 
 		const NUMBER_OF_RETRIES: u32 = 5;
@@ -41,8 +42,8 @@ pub mod files {
 				}
 			}
 		};
-		let headers = format!("");
-		(code, content, headers)
+		let len = content.len();
+		(code, content, len)
 	}
 
 	pub fn get_404() -> (u32, Vec<u8>) {

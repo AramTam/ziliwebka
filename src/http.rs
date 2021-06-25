@@ -1,4 +1,3 @@
-// TODO Headers should be case insensitive
 pub use http::*;
 
 mod http {
@@ -35,11 +34,13 @@ mod http {
 		}
 	}
 
+	pub type URI = (String, String);
+
 	///### Struct that represents HTTP Request
 	#[derive(Debug, PartialEq)]
 	pub struct Request {
 		pub method: Method,
-		pub uri: String,
+		pub uri: URI,
 		pub headers: HashMap<String, String>,
 		pub body: Option<Vec<u8>>,
 	}
@@ -50,14 +51,21 @@ mod http {
 			}
 
 			let mut previous = gotten_request.first().unwrap();
-			// Getting last \n\r to find start of body
+			// Getting first repeat of \n\r\n\r pattern
 			let mut start_of_body: usize = 0;
+			let mut is_new_line = false;
 			for (index, byte) in gotten_request.iter().enumerate().skip(1) {
-				if previous == &b'\r' && byte == &b'\n' {
-					start_of_body = index + 1;
-				} else {
-					previous = byte;
+				if byte == &b'\n' {
+					if previous == &b'\r' && is_new_line {
+						start_of_body = index + 1;
+						break;
+					}
+					is_new_line = true;
 				}
+				if byte != &b'\n' && byte != &b'\r' {
+					is_new_line = false;
+				}
+				previous = byte;
 			}
 			if start_of_body == 0 {
 				return None;
@@ -90,7 +98,11 @@ mod http {
 			if arg.is_none() {
 				return None;
 			}
-			let uri = arg.unwrap().to_string();
+			let uri = if let Some(parsed_uri) = parse_from_unsafe(arg.unwrap().to_string()) {
+				parsed_uri
+			} else {
+				return None;
+			};
 
 			// Parsing headers
 			let mut headers = HashMap::new();
@@ -106,7 +118,7 @@ mod http {
 
 				if let Some(index) = colon_index {
 					headers.insert(
-						line.chars().take(index).collect(),
+						line.chars().take(index).collect::<String>().to_lowercase(),
 						line.chars().skip(index + 1).collect(),
 					);
 				}
@@ -121,9 +133,6 @@ mod http {
 		}
 	}
 
-	// TODO add transfer from unsafe characters in URI
-	// TODO change new function to create empty response and add getters and setters for different vales
-	// TODO forbid using .. in URI for security measures
 	#[derive(Debug, PartialEq)]
 	pub struct Response {
 		code: usize,
@@ -131,12 +140,27 @@ mod http {
 		body: Vec<u8>,
 	}
 	impl Response {
-		pub fn new(code: usize, headers: HashMap<String, String>, body: Vec<u8>) -> Response {
+		pub fn new() -> Response {
 			Response {
-				code,
-				headers,
-				body,
+				code: 0,
+				headers: HashMap::new(),
+				body: Vec::new(),
 			}
+		}
+		pub fn set_code(&mut self, code: usize) {
+			self.code = code;
+		}
+		pub fn add_header(&mut self, tag: String, value: String) {
+			self.headers.insert(tag.to_lowercase(), value);
+		}
+		pub fn remove_header(&mut self, tag: &String) {
+			self.headers.remove(&tag.to_lowercase());
+		}
+		pub fn set_body(&mut self, new_body: Vec<u8>) {
+			self.body = new_body;
+		}
+		pub fn append_body(&mut self, mut body_to_append: Vec<u8>) {
+			self.body.append(&mut body_to_append);
 		}
 		pub fn to_bytes(self) -> Vec<u8> {
 			let mut string = format!(
@@ -148,13 +172,16 @@ mod http {
 			for (index, value) in self.headers {
 				string += &format!("{}: {}\r\n", index, value);
 			}
-			string += "\r\n";
+			if self.body.len() != 0 {
+				string += "\r\n";
+			}
 
 			let mut bytes = Vec::from(string.as_bytes());
 			bytes.append(&mut self.body.clone());
 			bytes
 		}
 	}
+
 	fn resolve_reason_phrase(code: &usize) -> String {
 		String::from(match code {
 			100 => "Continue",
@@ -200,6 +227,50 @@ mod http {
 			_ => "",
 		})
 	}
+	/// ## Function to decode unsafe URI
+	/// Returns `None` if path contains any encoded character
+	pub fn parse_from_unsafe(uri: String) -> Option<URI> {
+		use std::u8;
+		// This function should parse unsafe characters ONLY in request not in path
+		let mut parsed_path: String = String::new();
+		// Looking for end of request, if we find any unsafe or percent encoded characters in path return None
+		let mut request_start = uri.len();
+		for (index, letter) in uri.chars().enumerate() {
+			if letter == '%' {
+				return None;
+			} else if letter == '?' {
+				request_start = index;
+				break;
+			}
+			parsed_path.push(letter);
+		}
+
+		let mut parsed_query = String::new();
+		if uri.len() != request_start {
+			parsed_query.reserve(uri.len() - request_start);
+			// Parsing all unsafe percent-encoded characters
+			let mut hex = String::new();
+			hex.reserve(2);
+			let mut is_reading = false;
+			for letter in uri.chars().skip(request_start) {
+				if letter == '%' {
+					// Parsing next 2 characters to form hexadecimal and transforming them to characters
+					is_reading = true;
+				} else if is_reading {
+					hex.push(letter);
+					if hex.len() == 2 {
+						parsed_query.push(u8::from_str_radix(&hex, 16).unwrap_or(0) as char);
+						is_reading = false;
+						hex.truncate(0);
+					}
+				} else {
+					parsed_query.push(letter);
+				};
+			}
+		}
+
+		Some((parsed_path, parsed_query))
+	}
 
 	#[test]
 	fn test_request_parsing() {
@@ -207,17 +278,18 @@ mod http {
 			String::from("GET /index.html HTTP/1.1\r\nHost: 0.0.0.0:7878\r\n").as_bytes(),
 		);
 		let mut map = HashMap::new();
-		map.insert("Host".to_string(), " 0.0.0.0:7878".to_string());
+		map.insert("ost".to_string(), " 0.0.0.0:7878".to_string());
 		assert_eq!(
 			parsed_request.unwrap(),
 			Request {
 				method: Method::GET,
-				uri: String::from("/index.html"),
+				uri: (String::from("/index.html"), String::new()),
 				headers: map,
 				body: None
 			}
 		);
 	}
+
 	#[test]
 	fn test_to_bytes_response() {
 		let mut headers = HashMap::new();
@@ -229,6 +301,19 @@ mod http {
 		};
 		let vector = Vec::from("HTTP/1.1 200 OK\r\nHost: 0.0.0.0:7878\r\n".as_bytes());
 		assert_eq!(response.to_bytes(), vector);
+	}
+
+	#[test]
+	fn test_from_unsafe_parsing() {
+		let string_to_parse =
+			"sample.com/?hello+world+this+is+a+test+string+%25+.+%2B+-+%3D+-+*".to_string();
+		assert_eq!(
+			parse_from_unsafe(string_to_parse).unwrap(),
+			(
+				"sample.com/".to_string(),
+				"?hello+world+this+is+a+test+string+%+.+++-+=+-+*".to_string()
+			)
+		);
 	}
 }
 
