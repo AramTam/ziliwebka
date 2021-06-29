@@ -1,9 +1,12 @@
 pub use http::*;
-
+// TODO better error handling
 mod http {
+	use std::cell::Cell;
 	use std::collections::HashMap;
+	use std::io::prelude::*;
+	use std::net::TcpStream;
 
-	#[derive(Debug, PartialEq)]
+	#[derive(Debug, PartialEq, Clone)]
 	pub enum Method {
 		GET,
 		HEAD,
@@ -37,17 +40,23 @@ mod http {
 	pub type URI = (String, String);
 
 	///### Struct that represents HTTP Request
-	#[derive(Debug, PartialEq)]
 	pub struct Request {
-		pub method: Method,
-		pub uri: URI,
-		pub headers: HashMap<String, String>,
-		pub body: Option<Vec<u8>>,
+		stream: Cell<TcpStream>,
+		method: Option<Method>,
+		uri: Option<URI>,
+		headers: Option<HashMap<String, String>>,
+		body: Option<Vec<u8>>,
 	}
+
+	pub struct SafeRequest(Request);
+
 	impl Request {
-		pub fn new(gotten_request: &[u8]) -> Option<Request> {
+		pub fn new(mut stream: TcpStream) -> Result<SafeRequest, Request> {
+			let mut gotten_request = [0; 2048];
+			stream.read(&mut gotten_request).unwrap();
+
 			if gotten_request.len() == 0 {
-				return None;
+				return Err(Request::from(stream, None, None, None, None));
 			}
 
 			let mut previous = gotten_request.first().unwrap();
@@ -68,7 +77,7 @@ mod http {
 				previous = byte;
 			}
 			if start_of_body == 0 {
-				return None;
+				return Err(Request::from(stream, None, None, None, None));
 			}
 			// Splitting request to request line + headers and body
 			let (headers, body) = gotten_request.split_at(start_of_body);
@@ -90,22 +99,23 @@ mod http {
 			let mut line = lines[0].split(" ").into_iter();
 			let mut arg = line.next();
 			if arg.is_none() {
-				return None;
+				return Err(Request::from(stream, None, None, None, None));
 			}
-			let method = Method::new(&arg.unwrap());
+			let method = Some(Method::new(&arg.unwrap()));
 
 			arg = line.next();
 			if arg.is_none() {
-				return None;
+				return Err(Request::from(stream, method, None, None, None));
 			}
+
 			let uri = if let Some(parsed_uri) = parse_from_unsafe(arg.unwrap().to_string()) {
-				parsed_uri
+				Some(parsed_uri)
 			} else {
-				return None;
+				return Err(Request::from(stream, method, None, None, None));
 			};
 
 			// Parsing headers
-			let mut headers = HashMap::new();
+			let mut headers = Some(HashMap::new());
 			for line in lines.into_iter().skip(1) {
 				let mut colon_index = None;
 				// Looking for firstly appeared ':' in line
@@ -117,19 +127,68 @@ mod http {
 				}
 
 				if let Some(index) = colon_index {
-					headers.insert(
+					headers.as_mut().unwrap().insert(
 						line.chars().take(index).collect::<String>().to_lowercase(),
 						line.chars().skip(index + 1).collect(),
 					);
 				}
 			}
 
-			Some(Request {
+			Ok(SafeRequest(Request {
+				stream: Cell::new(stream),
+				method: method,
+				uri: uri,
+				headers: headers,
+				body,
+			}))
+		}
+		fn from(
+			mut stream: TcpStream,
+			method: Option<Method>,
+			uri: Option<URI>,
+			headers: Option<HashMap<String, String>>,
+			body: Option<Vec<u8>>,
+		) -> Request {
+			Request {
+				stream: Cell::new(stream),
 				method,
 				uri,
 				headers,
 				body,
-			})
+			}
+		}
+		pub fn method(&self) -> Option<Method> {
+			self.method.clone()
+		}
+		pub fn uri(&self) -> Option<URI> {
+			self.uri.clone()
+		}
+		pub fn headers(&self) -> Option<HashMap<String, String>> {
+			self.headers.clone()
+		}
+		pub fn body(&self) -> Option<Vec<u8>> {
+			self.body.clone()
+		}
+		pub fn respond(self, response: Response) {
+			self.stream.into_inner().write(&response.to_bytes());
+		}
+	}
+
+	impl SafeRequest {
+		pub fn method(&self) -> Method {
+			self.0.method.clone().unwrap()
+		}
+		pub fn uri(&self) -> URI {
+			self.0.uri.clone().unwrap()
+		}
+		pub fn headers(&self) -> HashMap<String, String> {
+			self.0.headers.clone().unwrap()
+		}
+		pub fn body(&self) -> Vec<u8> {
+			self.0.body.clone().unwrap()
+		}
+		pub fn respond(self, response: Response) {
+			self.0.stream.into_inner().write(&response.to_bytes());
 		}
 	}
 
@@ -272,48 +331,36 @@ mod http {
 		Some((parsed_path, parsed_query))
 	}
 
-	#[test]
-	fn test_request_parsing() {
-		let parsed_request = Request::new(
-			String::from("GET /index.html HTTP/1.1\r\nHost: 0.0.0.0:7878\r\n").as_bytes(),
-		);
-		let mut map = HashMap::new();
-		map.insert("ost".to_string(), " 0.0.0.0:7878".to_string());
-		assert_eq!(
-			parsed_request.unwrap(),
-			Request {
-				method: Method::GET,
-				uri: (String::from("/index.html"), String::new()),
-				headers: map,
-				body: None
-			}
-		);
-	}
+	#[cfg(test)]
+	mod test {
+		use super::*;
+		// TODO create integration test for request parsing
 
-	#[test]
-	fn test_to_bytes_response() {
-		let mut headers = HashMap::new();
-		headers.insert("Host".to_string(), "0.0.0.0:7878".to_string());
-		let response = Response {
-			code: 200,
-			headers,
-			body: Vec::new(),
-		};
-		let vector = Vec::from("HTTP/1.1 200 OK\r\nHost: 0.0.0.0:7878\r\n".as_bytes());
-		assert_eq!(response.to_bytes(), vector);
-	}
+		#[test]
+		fn test_to_bytes_response() {
+			let mut headers = HashMap::new();
+			headers.insert("Host".to_string(), "0.0.0.0:7878".to_string());
+			let response = Response {
+				code: 200,
+				headers,
+				body: Vec::new(),
+			};
+			let vector = Vec::from("HTTP/1.1 200 OK\r\nHost: 0.0.0.0:7878\r\n".as_bytes());
+			assert_eq!(response.to_bytes(), vector);
+		}
 
-	#[test]
-	fn test_from_unsafe_parsing() {
-		let string_to_parse =
-			"sample.com/?hello+world+this+is+a+test+string+%25+.+%2B+-+%3D+-+*".to_string();
-		assert_eq!(
-			parse_from_unsafe(string_to_parse).unwrap(),
-			(
-				"sample.com/".to_string(),
-				"?hello+world+this+is+a+test+string+%+.+++-+=+-+*".to_string()
-			)
-		);
+		#[test]
+		fn test_from_unsafe_parsing() {
+			let string_to_parse =
+				"sample.com/?hello+world+this+is+a+test+string+%25+.+%2B+-+%3D+-+*".to_string();
+			assert_eq!(
+				parse_from_unsafe(string_to_parse).unwrap(),
+				(
+					"sample.com/".to_string(),
+					"?hello+world+this+is+a+test+string+%+.+++-+=+-+*".to_string()
+				)
+			);
+		}
 	}
 }
 

@@ -1,5 +1,6 @@
 // TODO learn more about caching
 pub use files::*;
+
 pub mod files {
 	use std::fs;
 
@@ -47,7 +48,7 @@ pub mod files {
 	}
 
 	pub fn get_404() -> (u32, Vec<u8>) {
-		//Trying to reach root/404.html file if not just giving default output
+		//Trying to reach root/404.html file if not found just giving default output
 		(
 			404,
 			fs::read("root/404.html")
