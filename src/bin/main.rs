@@ -1,25 +1,16 @@
 extern crate ziliwebka;
 
-use std::net::TcpListener;
-use std::net::TcpStream;
-
 use ziliwebka::files::*;
 use ziliwebka::http::*;
-use ziliwebka::threads::ThreadPool;
+use ziliwebka::server::Server;
 
 fn main() {
-	let listener = TcpListener::bind("0.0.0.0:7878").unwrap();
-	let pool = ThreadPool::new(4);
-
-	for stream in listener.incoming() {
-		let stream = stream.unwrap();
-		pool.execute(|| handle_connection(stream));
-	}
+	let server = Server::new("0.0.0.0:7878".to_string(), 5);
+	server.listen(&handle_connection);
+	loop {}
 }
 
-fn handle_connection(mut stream: TcpStream) {
-	// println!("{}", String::from_utf8_lossy(&buffer));
-	let request = Request::new(stream);
+fn handle_connection(request: Result<SafeRequest, Request>) {
 	match request {
 		Ok(request) => {
 			let mut response = Response::new();
@@ -31,6 +22,7 @@ fn handle_connection(mut stream: TcpStream) {
 
 			request.respond(response);
 		}
+
 		Err(request) => {
 			let mut response = Response::new();
 			response.set_code(400);
