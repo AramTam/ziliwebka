@@ -1,4 +1,6 @@
 // TODO learn more about caching
+// TODO add interfaces for compressing
+
 pub use files::*;
 
 pub mod files {

@@ -1,5 +1,6 @@
+// TODO better error handling for receiving and sending messages
+
 pub use http::*;
-// TODO better error handling
 mod http {
 	use std::cell::Cell;
 	use std::collections::HashMap;
@@ -37,7 +38,14 @@ mod http {
 		}
 	}
 
-	pub type URI = (String, String);
+	#[derive(Debug, PartialEq, Clone)]
+	pub enum URIQuery {
+		SingleParamsList(Vec<String>),
+		PairList(HashMap<String, String>),
+	}
+	/// ### URI representation
+	/// It consists of path and optional query
+	pub type URI = (String, Option<URIQuery>);
 
 	///### Struct that represents HTTP Request
 	pub struct Request {
@@ -286,12 +294,36 @@ mod http {
 			_ => "",
 		})
 	}
+
+	/// Function to parse all hex encoded characters
+	pub fn parse_hex(string_with_hex: &str) -> String {
+		let mut parsed = String::new();
+		parsed.reserve(string_with_hex.len());
+		let mut hex = String::new();
+		hex.reserve(2);
+		let mut is_reading = false;
+		for letter in string_with_hex.chars() {
+			if letter == '%' {
+				// Parsing next 2 characters to form hexadecimal and transforming them to characters
+				is_reading = true;
+			} else if is_reading {
+				hex.push(letter);
+				if hex.len() == 2 {
+					parsed.push(u8::from_str_radix(&hex, 16).unwrap_or(0) as char);
+					is_reading = false;
+					hex.truncate(0);
+				}
+			} else {
+				parsed.push(letter);
+			};
+		}
+		parsed
+	}
+
 	/// ## Function to decode unsafe URI
 	/// Returns `None` if path contains any encoded character
 	pub fn parse_from_unsafe(uri: String) -> Option<URI> {
-		use std::u8;
 		// This function should parse unsafe characters ONLY in request not in path
-		let mut parsed_path: String = String::new();
 		// Looking for end of request, if we find any unsafe or percent encoded characters in path return None
 		let mut request_start = uri.len();
 		for (index, letter) in uri.chars().enumerate() {
@@ -301,34 +333,34 @@ mod http {
 				request_start = index;
 				break;
 			}
-			parsed_path.push(letter);
 		}
+		let (parsed_path, query) = uri.split_at(request_start);
 
-		let mut parsed_query = String::new();
-		if uri.len() != request_start {
-			parsed_query.reserve(uri.len() - request_start);
-			// Parsing all unsafe percent-encoded characters
-			let mut hex = String::new();
-			hex.reserve(2);
-			let mut is_reading = false;
-			for letter in uri.chars().skip(request_start) {
-				if letter == '%' {
-					// Parsing next 2 characters to form hexadecimal and transforming them to characters
-					is_reading = true;
-				} else if is_reading {
-					hex.push(letter);
-					if hex.len() == 2 {
-						parsed_query.push(u8::from_str_radix(&hex, 16).unwrap_or(0) as char);
-						is_reading = false;
-						hex.truncate(0);
+		// Identifying if query consists from single values or pairs of key and value
+		let mut parsed_query = Option::<URIQuery>::None;
+		if query.len() > 0 {
+			// If query has at least one "=" character it will be parsed as key-value pairs if not it is list of values
+			if query.contains("=") {
+				let mut map = HashMap::<String, String>::new();
+				for query_value in query.split("&") {
+					let pair: Vec<&str> = query_value.split("=").collect();
+					if pair.len() == 2 {
+						&map.insert(pair[0].to_string(), pair[1].to_string());
+					} else {
+						continue;
 					}
-				} else {
-					parsed_query.push(letter);
-				};
+				}
+				parsed_query = Some(URIQuery::PairList(map));
+			} else {
+				let mut list = Vec::<String>::new();
+				for query_value in query.split("&") {
+					list.push(query_value.to_string());
+				}
+				parsed_query = Some(URIQuery::SingleParamsList(list));
 			}
 		}
 
-		Some((parsed_path, parsed_query))
+		Some((parsed_path.to_string(), parsed_query))
 	}
 
 	#[cfg(test)]
